@@ -1,6 +1,7 @@
 from collections.abc import Generator
 
 from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -9,6 +10,14 @@ from models import Email
 from api.schemas import EmailResponse, StatsResponse
 
 app = FastAPI(title="Email Classifier API", version="3.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")

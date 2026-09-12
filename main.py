@@ -1,5 +1,6 @@
-"""Fetch unread Gmail messages, classify them, then persist them once."""
-
+import sys
+import time
+from datetime import datetime
 from email.utils import parsedate_to_datetime
 
 from ai.classifier import classify_email
@@ -32,7 +33,7 @@ def parse_received_at(value: str | None):
         return None
 
 
-def main() -> None:
+def process_emails() -> None:
     init_database()
     service = get_gmail_service()
     messages = get_recent_emails(service)
@@ -67,5 +68,28 @@ def main() -> None:
             print(f"{'Saved' if created else 'Skipped'}: {email.subject or '(no subject)'}")
 
 
+def run_loop(interval_seconds: int = 180) -> None:
+    """Run continuously, checking for new emails every interval_seconds (default 5 min)."""
+    minutes = interval_seconds // 60
+    print(f"🚀 Starting continuous email monitor (checking every {minutes} min). Press Ctrl+C to stop.\n")
+    while True:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] Checking for unread emails...")
+        try:
+            process_emails()
+        except Exception as err:
+            print(f"[{timestamp}] Error during email check: {err}")
+        print(f"Sleeping for {minutes} minutes...\n")
+        time.sleep(interval_seconds)
+
+
+def main() -> None:
+    if "--loop" in sys.argv:
+        run_loop(interval_seconds=180)
+    else:
+        process_emails()
+
+
 if __name__ == "__main__":
     main()
+
