@@ -1,71 +1,70 @@
-from gmail_service import get_gmail_service
-from email_parser import extract_email_content
+"""Fetch unread Gmail messages, classify them, then persist them once."""
+
+from email.utils import parsedate_to_datetime
+
+from ai.classifier import classify_email
+from database import SessionLocal, init_database
+from gmail.email_parser import extract_email_content
+from gmail.gmail_service import get_gmail_service
+from repository import save_classified_email
 
 
-def get_headers(message):
-    headers = message["payload"].get(
-        "headers",
-        []
-    )
-
-    result = {}
-
-    for header in headers:
-        result[header["name"].lower()] = header["value"]
-
-    return result
+def get_headers(message: dict) -> dict[str, str]:
+    return {
+        header["name"].lower(): header["value"]
+        for header in message["payload"].get("headers", [])
+    }
 
 
-def main():
-    service = get_gmail_service()
-
+def get_recent_emails(service, max_results: int = 5) -> list[dict]:
     response = service.users().messages().list(
-        userId="me",
-        maxResults=5
+        userId="me", q="in:inbox is:unread newer_than:7d", maxResults=max_results
     ).execute()
+    return response.get("messages", [])
 
-    messages = response.get(
-        "messages",
-        []
-    )
 
-    for item in messages:
+def parse_received_at(value: str | None):
+    if not value:
+        return None
+    try:
+        return parsedate_to_datetime(value)
+    except (TypeError, ValueError, IndexError):
+        return None
 
-        message = service.users().messages().get(
-            userId="me",
-            id=item["id"],
-            format="full"
-        ).execute()
 
-        headers = get_headers(message)
+def main() -> None:
+    init_database()
+    service = get_gmail_service()
+    messages = get_recent_emails(service)
 
-        content = extract_email_content(
-            message["payload"]
-        )
+    with SessionLocal() as db:
+        for item in messages:
+            message = service.users().messages().get(
+                userId="me", id=item["id"], format="full"
+            ).execute()
+            headers = get_headers(message)
+            content = extract_email_content(message["payload"])
 
-        print("=" * 80)
+            # Skip the LLM call too: reruns should be cheap and idempotent.
+            from models import Email
+            if db.query(Email.id).filter_by(gmail_message_id=message["id"]).first():
+                print(f"Skipped already-saved message: {message['id']}")
+                continue
 
-        print("Message ID:")
-        print(message["id"])
-
-        print("\nThread ID:")
-        print(message["threadId"])
-
-        print("\nFrom:")
-        print(headers.get("from"))
-
-        print("\nTo:")
-        print(headers.get("to"))
-
-        print("\nSubject:")
-        print(headers.get("subject"))
-
-        print("\nBody:")
-        print(content["body"])
-
-        print("\nAttachments:")
-        for attachment in content["attachments"]:
-            print(attachment)
+            classification = classify_email(
+                subject=headers.get("subject", ""), body=content["body"]
+            )
+            email, created = save_classified_email(
+                db,
+                gmail_message_id=message["id"],
+                gmail_thread_id=message.get("threadId"),
+                sender=headers.get("from", ""),
+                subject=headers.get("subject", ""),
+                body=content["body"],
+                received_at=parse_received_at(headers.get("date")),
+                classification=classification,
+            )
+            print(f"{'Saved' if created else 'Skipped'}: {email.subject or '(no subject)'}")
 
 
 if __name__ == "__main__":

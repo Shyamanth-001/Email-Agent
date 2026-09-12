@@ -2,3 +2,14 @@ google-api-python-client
 google-auth-httplib2
 google-auth-oauthlib
 beautifulsoup4
+google-genai
+pydantic
+python-dotenv
+groq
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+streamlit
+requests
+pandas
