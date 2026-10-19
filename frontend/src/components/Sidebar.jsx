@@ -1,8 +1,8 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Mail, Settings, Sparkles, Inbox } from 'lucide-react';
+import { LayoutDashboard, Mail, Settings, Sparkles, LogOut, User as UserIcon } from 'lucide-react';
 
-export const Sidebar = ({ emailCount }) => {
+export const Sidebar = ({ emailCount, user, onLogout }) => {
   const navItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Emails', path: '/emails', icon: Mail, badge: emailCount },
@@ -57,8 +57,43 @@ export const Sidebar = ({ emailCount }) => {
         })}
       </nav>
 
-      {/* Footer Info */}
-      <div className="p-4 m-4 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs text-slate-400 flex items-center justify-between">
+      {/* User Profile Footer */}
+      {user && (
+        <div className="p-4 border-t border-slate-800/80 bg-slate-900/40">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              {user.picture ? (
+                <img
+                  src={user.picture}
+                  alt={user.name || user.email}
+                  className="w-8 h-8 rounded-full border border-slate-700 object-cover shrink-0"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center font-bold text-xs shrink-0">
+                  {user.name ? user.name[0].toUpperCase() : <UserIcon className="w-4 h-4" />}
+                </div>
+              )}
+              <div className="overflow-hidden">
+                <p className="text-xs font-semibold text-slate-200 truncate">
+                  {user.name || user.email.split('@')[0]}
+                </p>
+                <p className="text-[11px] text-slate-400 truncate">{user.email}</p>
+              </div>
+            </div>
+
+            <button
+              onClick={onLogout}
+              title="Logout"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors shrink-0"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* System Status Footer */}
+      <div className="p-4 m-4 mt-0 rounded-xl bg-slate-900/60 border border-slate-800/80 text-xs text-slate-400 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
           <span>API Connected</span>

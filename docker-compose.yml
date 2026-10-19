@@ -1,0 +1,38 @@
+services:
+
+  db:
+    image: postgres:18
+    container_name: email-agent-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "0114"
+      POSTGRES_DB: email_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+
+  backend:
+    build: .
+    container_name: email-agent-backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:0114@db:5432/email_agent
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    depends_on:
+      - db
+
+  frontend:
+    build: ./frontend
+    container_name: email-agent-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

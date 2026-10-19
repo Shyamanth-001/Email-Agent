@@ -20,10 +20,14 @@ def save_classified_email(
     body: str,
     received_at: datetime | None,
     classification: EmailClassification,
+    user_id: int | None = None,
 ) -> tuple[Email, bool]:
     """Return (email, created). Existing Gmail messages are never reclassified/saved."""
     existing = db.scalar(
-        select(Email).where(Email.gmail_message_id == gmail_message_id)
+        select(Email).where(
+            Email.gmail_message_id == gmail_message_id,
+            Email.user_id == user_id,
+        )
     )
     if existing:
         return existing, False
@@ -31,6 +35,7 @@ def save_classified_email(
     email = Email(
         gmail_message_id=gmail_message_id,
         gmail_thread_id=gmail_thread_id,
+        user_id=user_id,
         sender=sender,
         subject=subject,
         body=body,
@@ -44,7 +49,10 @@ def save_classified_email(
         # A second worker may have saved this Gmail message after our first lookup.
         db.rollback()
         existing = db.scalar(
-            select(Email).where(Email.gmail_message_id == gmail_message_id)
+            select(Email).where(
+                Email.gmail_message_id == gmail_message_id,
+                Email.user_id == user_id,
+            )
         )
         if existing:
             return existing, False

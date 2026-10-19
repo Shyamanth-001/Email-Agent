@@ -26,7 +26,36 @@ export const Dashboard = ({
     return s.includes('negative') || s.includes('frustrated') || s.includes('angry');
   }).length;
 
-  const highPriorityCount = stats?.by_priority?.High || stats?.by_priority?.high || 0;
+  // Category and Priority Data with fallbacks from loaded emails list
+  const categoryData =
+    (stats?.by_category && Object.keys(stats.by_category).length > 0)
+      ? stats.by_category
+      : (stats?.categories && Object.keys(stats.categories).length > 0)
+      ? stats.categories
+      : emails.reduce((acc, e) => {
+          const raw = (e.category || 'Uncategorized').trim();
+          const cat = raw ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : 'Uncategorized';
+          acc[cat] = (acc[cat] || 0) + 1;
+          return acc;
+        }, {});
+
+  const priorityData =
+    (stats?.by_priority && Object.keys(stats.by_priority).length > 0)
+      ? stats.by_priority
+      : emails.reduce((acc, e) => {
+          const raw = (e.priority || 'Unassigned').trim();
+          const prio = raw ? raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase() : 'Unassigned';
+          acc[prio] = (acc[prio] || 0) + 1;
+          return acc;
+        }, {});
+
+  const highPriorityCount =
+    stats?.by_priority?.High ||
+    stats?.by_priority?.high ||
+    priorityData?.High ||
+    priorityData?.high ||
+    0;
+
   const recentEmails = emails.slice(0, 5);
 
   return (
@@ -91,7 +120,7 @@ export const Dashboard = ({
             </div>
             <span className="text-[11px] text-slate-500 font-medium">Distribution</span>
           </div>
-          <CategoryChart data={stats?.by_category || {}} />
+          <CategoryChart data={categoryData} />
         </div>
 
         {/* Priority Breakdown */}
@@ -103,7 +132,7 @@ export const Dashboard = ({
             </div>
             <span className="text-[11px] text-slate-500 font-medium">Urgency breakdown</span>
           </div>
-          <PriorityChart data={stats?.by_priority || {}} />
+          <PriorityChart data={priorityData} />
         </div>
       </div>
 

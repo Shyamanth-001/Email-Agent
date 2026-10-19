@@ -13,3 +13,8 @@ psycopg[binary]
 streamlit
 requests
 pandas
+PyJWT
+google-auth
+bcrypt
+email-validator
+alembic

@@ -8,6 +8,14 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  server: {
+    proxy: {
+      '/auth': 'http://localhost:8000',
+      '/emails': 'http://localhost:8000',
+      '/stats': 'http://localhost:8000',
+      '/gmail': 'http://localhost:8000',
+    },
+  },
   build: {
     chunkSizeWarningLimit: 1000,
     rollupOptions: {

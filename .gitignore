@@ -218,9 +218,10 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 =======
+gmail_state/
 credentials.json
 token.json
 .env
 .venv
 __pycache__/
-
+test_auth_db.sqlite
