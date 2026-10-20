@@ -13,10 +13,16 @@ from google.oauth2 import id_token
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from database import get_db
 from models import RefreshToken, User
 
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
-JWT_SECRET = os.getenv("JWT_SECRET", "super-secret-jwt-key-change-in-production")
+JWT_SECRET = os.getenv("JWT_SECRET")
+
+if not JWT_SECRET:
+    raise RuntimeError(
+        "JWT_SECRET environment variable must be configured."
+    )
 
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
@@ -233,9 +239,10 @@ def verify_google_token(credential: str) -> dict:
 # FastAPI Dependency — Get Current User
 # ==================================================
 
+
 def get_current_user_from_db(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(lambda: None),
+    db: Session = Depends(get_db),
 ) -> User:
     """Extract Bearer JWT, verify signature & expiration, and retrieve active user."""
     token = credentials.credentials

@@ -27,6 +27,7 @@ export function AuthPage({ onAuthSuccess }) {
     setError(null);
     try {
       const data = await loginGoogleCode(response.code);
+      localStorage.setItem('hasSession', 'true');
       onAuthSuccess(data.user);
     } catch (err) {
       console.error('Google code auth error:', err);

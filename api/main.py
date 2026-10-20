@@ -1,6 +1,5 @@
 import os
 from datetime import datetime, timezone
-from collections.abc import Generator
 from email.utils import parsedate_to_datetime
 
 from googleapiclient.errors import HttpError
@@ -11,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ai.classifier import classify_email
-from database import SessionLocal, init_database
+from database import SessionLocal, init_database, get_db
 from gmail.email_parser import extract_email_content
 from gmail.gmail_service import (
     create_gmail_watch,
@@ -47,6 +46,10 @@ from api.auth import (
     verify_password,
 )
 
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import id_token
+
+
 bearer_scheme = HTTPBearer()
 
 app = FastAPI(
@@ -58,21 +61,45 @@ app = FastAPI(
 # CORS
 # ==================================================
 
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=[
+#         "http://localhost:5173",
+#         "http://localhost:8000",
+#         "http://127.0.0.1:5173",
+#         "http://127.0.0.1:8000",
+#         "http://localhost",
+#         "http://127.0.0.1",
+#     ],
+#     allow_origin_regex=r"https?://.*",
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
+
+
+
+# Comma-separated list of allowed frontend origins.
+# Local development is included by default.
+frontend_origins = os.getenv(
+    "FRONTEND_ORIGINS",
+    "http://localhost:5173",
+)
+
+allowed_origins = [
+    origin.strip().rstrip("/")
+    for origin in frontend_origins.split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:5173",
-        "http://127.0.0.1:8000",
-        "http://localhost",
-        "http://127.0.0.1",
-    ],
-    allow_origin_regex=r"https?://.*",
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ==================================================
 # Configuration
@@ -95,16 +122,7 @@ def create_tables() -> None:
     init_database()
 
 
-# ==================================================
-# Database dependency
-# ==================================================
 
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ==================================================
@@ -361,8 +379,62 @@ def background_process_fallback_history(previous_history_id: str, new_history_id
         print("\nERROR in background fallback Gmail history processing:", error)
 
 
+PUBSUB_PUSH_AUDIENCE = os.getenv("PUBSUB_PUSH_AUDIENCE", "")
+PUBSUB_PUSH_SERVICE_ACCOUNT = os.getenv(
+    "PUBSUB_PUSH_SERVICE_ACCOUNT",
+    "",
+)
+
+
+def verify_pubsub_push(request: Request) -> None:
+    """Verify the OIDC identity token attached to Pub/Sub push requests."""
+    if not PUBSUB_PUSH_AUDIENCE or not PUBSUB_PUSH_SERVICE_ACCOUNT:
+        raise HTTPException(
+            status_code=503,
+            detail="Pub/Sub authentication is not configured",
+        )
+
+    # Cloud Run may forward the platform authorization token here.
+    authorization = (
+        request.headers.get("X-Serverless-Authorization")
+        or request.headers.get("Authorization")
+        or ""
+    )
+
+    scheme, separator, token = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer" or not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Pub/Sub identity token",
+        )
+
+    try:
+        claims = id_token.verify_oauth2_token(
+            token,
+            GoogleAuthRequest(),
+            audience=PUBSUB_PUSH_AUDIENCE,
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Pub/Sub identity token",
+        )
+
+    if (
+        claims.get("email") != PUBSUB_PUSH_SERVICE_ACCOUNT
+        or claims.get("email_verified") is not True
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Unexpected Pub/Sub service identity",
+        )
+
+
+
 @app.post("/gmail/webhook")
 async def gmail_webhook(request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    verify_pubsub_push(request)
+
     print("\n" + "=" * 60)
     print("PUB/SUB NOTIFICATION RECEIVED")
     print("=" * 60)
@@ -633,10 +705,23 @@ def exchange_google_code_for_tokens(code: str) -> dict:
     return response.json()
 
 
+def _bg_setup_watch(user_id: int) -> None:
+    """Background task: create/renew Gmail watch after login without blocking the response."""
+    with SessionLocal() as db:
+        user = db.scalar(select(User).where(User.id == user_id))
+        if not user:
+            return
+        try:
+            setup_watch_for_user(user, db)
+        except Exception as err:
+            print(f"Warning: Automatic watch setup failed for {user.email}: {err}")
+
+
 @app.post("/auth/google/code", response_model=TokenResponse)
 def google_code_login(
     request: GoogleCodeRequest,
     response: Response,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     tokens = exchange_google_code_for_tokens(request.code)
@@ -690,11 +775,9 @@ def google_code_login(
         user.gmail_refresh_token = gmail_refresh_token
         db.commit()
 
+        # Run Gmail watch setup in background so login response is instant
         if os.getenv("GMAIL_PUBSUB_TOPIC"):
-            try:
-                setup_watch_for_user(user, db)
-            except Exception as err:
-                print(f"Warning: Automatic watch setup failed for {user.email}:", err)
+            background_tasks.add_task(_bg_setup_watch, user.id)
 
     if not user.is_active:
         raise HTTPException(
@@ -723,6 +806,7 @@ def google_code_login(
 
 @app.post("/auth/connect-gmail")
 def connect_gmail(
+    background_tasks: BackgroundTasks,
     body: ConnectGmailTokenRequest | None = None,
     code: str | None = Query(None),
     credentials: HTTPAuthorizationCredentials = Security(bearer_scheme),
@@ -747,18 +831,13 @@ def connect_gmail(
     db.commit()
     db.refresh(current_user)
 
-    # Attempt to setup watch automatically if GMAIL_PUBSUB_TOPIC configured
-    watch_res = None
+    # Run watch setup in background so this endpoint returns instantly
     if os.getenv("GMAIL_PUBSUB_TOPIC"):
-        try:
-            watch_res = setup_watch_for_user(current_user, db)
-        except Exception as err:
-            print(f"Warning: automatic watch setup failed for {current_user.email}:", err)
+        background_tasks.add_task(_bg_setup_watch, current_user.id)
 
     return {
         "status": "connected",
         "email": current_user.email,
-        "watch": watch_res,
     }
 
 
@@ -951,11 +1030,22 @@ def renew_all_watches(request: Request, db: Session = Depends(get_db)):
     ``X-Scheduler-Token`` header to match the ``SCHEDULER_SECRET``
     environment variable so the endpoint is not publicly exploitable.
     """
+    
+
     scheduler_secret = os.getenv("SCHEDULER_SECRET")
-    if scheduler_secret:
-        incoming_token = request.headers.get("X-Scheduler-Token", "")
-        if incoming_token != scheduler_secret:
-            raise HTTPException(status_code=401, detail="Invalid scheduler token")
+    if not scheduler_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Scheduler authentication is not configured",
+    )
+
+    incoming_token = request.headers.get("X-Scheduler-Token", "")
+    if incoming_token != scheduler_secret:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid scheduler token",
+    )
+    
 
     users = (
         db.query(User)

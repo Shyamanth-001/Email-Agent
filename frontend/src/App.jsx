@@ -31,24 +31,26 @@ export function App() {
     let isMounted = true;
 
     const checkSession = async () => {
+      // Only attempt a refresh if we previously had a session.
+      // This prevents a 10-second timeout on every page load for
+      // unauthenticated users when the backend may be unreachable.
+      const hadSession = localStorage.getItem('hasSession') === 'true';
+      if (!hadSession) {
+        if (isMounted) setAuthChecking(false);
+        return;
+      }
+
       try {
-        // Attempt token refresh via HttpOnly cookie or access token
+        // Attempt token refresh via HttpOnly cookie
         const refreshData = await refreshAuthToken();
         if (isMounted && refreshData?.user) {
           setUser(refreshData.user);
           return;
         }
       } catch (err) {
-        // Refresh cookie absent or invalid; try fetchMe if memory token exists
-        try {
-          const userData = await fetchMe();
-          if (isMounted && userData) {
-            setUser(userData);
-            return;
-          }
-        } catch (meErr) {
-          if (isMounted) setUser(null);
-        }
+        // Refresh cookie absent or invalid — session is gone
+        localStorage.removeItem('hasSession');
+        if (isMounted) setUser(null);
       } finally {
         if (isMounted) setAuthChecking(false);
       }
@@ -58,6 +60,7 @@ export function App() {
 
     // Subscribe to auth errors (token rotation failure)
     const unsubscribe = onAuthError(() => {
+      localStorage.removeItem('hasSession');
       if (isMounted) setUser(null);
     });
 
@@ -104,6 +107,7 @@ export function App() {
 
   const handleLogout = async () => {
     await logoutUser();
+    localStorage.removeItem('hasSession');
     setUser(null);
     setStats(null);
     setEmails([]);

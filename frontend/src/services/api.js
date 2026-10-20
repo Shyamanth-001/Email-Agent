@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 let inMemoryAccessToken = null;
 let authErrorListeners = [];
@@ -33,7 +33,9 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
   withCredentials: true,
-  timeout: 10000,
+  // 15 s covers a cold-start backend; auth/google/code overrides to 20 s
+  // because it makes a backend→Google round-trip before responding.
+  timeout: 15000,
 });
 
 // Request Interceptor: Attach Access Token
@@ -135,9 +137,20 @@ export const loginGoogle = async (credential) => {
 };
 
 export const loginGoogleCode = async (code) => {
-  const response = await apiClient.post('/auth/google/code', { code });
-  setAccessToken(response.data.access_token);
-  return response.data;
+  try {
+    const response = await apiClient.post('/auth/google/code', { code }, { timeout: 20000 });
+    setAccessToken(response.data.access_token);
+    return response.data;
+  } catch (err) {
+    // Surface a helpful message when the backend is unreachable
+    if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+      throw new Error('Cannot reach the backend server. Make sure the FastAPI server is running and VITE_API_BASE_URL is correct.');
+    }
+    if (err.code === 'ERR_NETWORK' || !err.response) {
+      throw new Error('Network error — the backend server appears to be offline.');
+    }
+    throw err;
+  }
 };
 
 export const connectGmailToken = async (gmailRefreshToken, code) => {
